@@ -112,6 +112,7 @@ let pgNamespace = sql.define({
 });
 
 let jsonAgg = sql.functionCallCreator('json_agg');
+let unnest = sql.functionCallCreator('unnest');
 
 /**
  * Connect to a PostgreSQL database.
@@ -168,6 +169,25 @@ async function getColumns(client) {
   return arrayToObject(rows, 'oid');
 }
 
+async function getPrimaryKeys(client) {
+  let query = `
+    WITH c AS (
+      SELECT conrelid, unnest(conkey) AS conkey
+      FROM pg_catalog.pg_constraint
+      WHERE contype = 'p')
+    SELECT
+      c.conrelid,
+      json_agg(a.attname) as attname
+    FROM pg_catalog.pg_attribute a
+    JOIN c ON a.attrelid = c.conrelid AND a.attnum = c.conkey
+    GROUP BY c.conrelid
+  `;
+  let {rows} = await client.queryAsync(query);
+  return arrayToObject(rows, 'conrelid');
+}
+
+const NO_PRIMARY_KEYS = {attname: []};
+
 /**
  * Reflect a database.
  */
@@ -176,12 +196,16 @@ async function reflectDatabase(connString, schema = null) {
   try {
     let tables = await getTables(client, schema);
     let columns = await getColumns(client);
+    let primaryKeys = await getPrimaryKeys(client);
     let result = {};
     tables.forEach(table => {
       result[table.relname] = sql.define({
         name: table.relname,
         schema: table.nspname,
-        columns: columns[table.oid].columns.map(column => column.attname)
+        columns: columns[table.oid].columns.map(column => ({
+          name: column.attname,
+          primaryKey: (primaryKeys[table.oid] || NO_PRIMARY_KEYS).attname.indexOf(column.attname) > -1
+        }))
       });
     });
     return result;
@@ -223,11 +247,13 @@ function compile(metadata, spec) {
           }
           return column;
         }),
+      _synthesizeIDColumn(table, spec),
       _synthesizeEntityColumn(table, spec)
     );
   } else {
     query = query.select(
       table.columns,
+      _synthesizeIDColumn(table, spec),
       _synthesizeEntityColumn(table, spec)
     );
   }
@@ -236,6 +262,14 @@ function compile(metadata, spec) {
 
 function _synthesizeEntityColumn(table, spec) {
   return table.literal("'" + spec.entity + "'").as('$entity');
+}
+
+function _synthesizeIDColumn(table, spec) {
+  let primaryKeys = table.columns
+    .filter(column => column.primaryKey)
+    .map(column => table[column.name].toQuery().text)
+    .join('||');
+  return table.literal(primaryKeys).as('$id');
 }
 
 async function main() {
@@ -250,7 +284,9 @@ async function main() {
   });
   let client = await connect(connString);
   try {
+    console.log(query.toQuery());
     let {rows} = await client.queryAsync(query.toQuery());
+    console.log(rows);
   } finally {
     client.end();
   }
