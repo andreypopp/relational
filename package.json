@@ -1,0 +1,19 @@
+{
+  "name": "relational",
+  "version": "1.0.0",
+  "description": "Relation query language for PostgreSQL",
+  "main": "index.js",
+  "scripts": {
+    "test": "echo \"Error: no test specified\" && exit 1"
+  },
+  "author": "Andrey Popp <me@andreypopp.com>",
+  "license": "MIT",
+  "devDependencies": {
+    "babel": "^4.3.0"
+  },
+  "dependencies": {
+    "bluebird": "^2.9.10",
+    "pg": "^4.2.0",
+    "sql": "^0.45.2"
+  }
+}
